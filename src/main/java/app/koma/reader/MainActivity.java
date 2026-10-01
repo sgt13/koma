@@ -2,6 +2,9 @@ package app.koma.reader;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Rect;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -22,7 +25,18 @@ import android.webkit.WebViewClient;
 
 import androidx.webkit.WebViewAssetLoader;
 
+import com.google.mlkit.vision.common.InputImage;
+import com.google.mlkit.vision.text.Text;
+import com.google.mlkit.vision.text.TextRecognition;
+import com.google.mlkit.vision.text.TextRecognizer;
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions;
+
+import org.json.JSONArray;
 import org.json.JSONObject;
+
+import java.io.File;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class MainActivity extends Activity {
 
@@ -35,6 +49,8 @@ public class MainActivity extends Activity {
     private volatile boolean volumeKeys = false;
     private volatile boolean pageReady = false;
     private String pendingExternal = null;
+    private TextRecognizer recognizer;
+    private final ExecutorService ml = Executors.newSingleThreadExecutor();
 
     @Override
     protected void onCreate(Bundle state) {
@@ -173,6 +189,57 @@ public class MainActivity extends Activity {
                 } catch (Throwable t) {
                     String m = t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage();
                     call("onBookError", q(id) + "," + q("Impossible d'ouvrir ce fichier : " + m));
+                }
+            });
+        }
+
+        /** Détecte les blocs de texte d'une page avec l'IA de l'appareil (ML Kit, hors ligne). */
+        @JavascriptInterface
+        public void detectText(String reqId, String url) {
+            ml.execute(() -> {
+                try {
+                    File f = lib.fileForUrl(url);
+                    if (f == null) { call("onText", q(reqId) + ",null"); return; }
+                    BitmapFactory.Options o = new BitmapFactory.Options();
+                    o.inJustDecodeBounds = true;
+                    BitmapFactory.decodeFile(f.getPath(), o);
+                    int sample = 1;
+                    while (Math.max(o.outWidth, o.outHeight) / sample > 2600) sample *= 2;
+                    BitmapFactory.Options o2 = new BitmapFactory.Options();
+                    o2.inSampleSize = sample;
+                    final Bitmap bm = BitmapFactory.decodeFile(f.getPath(), o2);
+                    if (bm == null || o.outWidth <= 0) { call("onText", q(reqId) + ",null"); return; }
+                    final float sx = (float) o.outWidth / bm.getWidth(), sy = (float) o.outHeight / bm.getHeight();
+                    if (recognizer == null) recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
+                    recognizer.process(InputImage.fromBitmap(bm, 0))
+                            .addOnSuccessListener(text -> {
+                                JSONArray arr = new JSONArray();
+                                try {
+                                    for (Text.TextBlock b : text.getTextBlocks()) {
+                                        Rect r = b.getBoundingBox();
+                                        if (r == null) continue;
+                                        float lh = 0; int n = 0;
+                                        for (Text.Line l : b.getLines()) {
+                                            Rect lr = l.getBoundingBox();
+                                            if (lr != null) { lh += lr.height(); n++; }
+                                        }
+                                        JSONObject j = new JSONObject();
+                                        j.put("x", r.left * sx); j.put("y", r.top * sy);
+                                        j.put("w", r.width() * sx); j.put("h", r.height() * sy);
+                                        j.put("lh", n > 0 ? lh / n * sy : r.height() * sy);
+                                        j.put("t", b.getText());
+                                        arr.put(j);
+                                    }
+                                } catch (Exception ignored) { }
+                                bm.recycle();
+                                call("onText", q(reqId) + "," + arr);
+                            })
+                            .addOnFailureListener(e -> {
+                                bm.recycle();
+                                call("onText", q(reqId) + ",null");
+                            });
+                } catch (Throwable t) {
+                    call("onText", q(reqId) + ",null");
                 }
             });
         }
