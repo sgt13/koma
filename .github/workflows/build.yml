@@ -25,7 +25,7 @@ jobs:
 
       - name: Télécharger les polices
         run: |
-          mkdir -p app/src/main/assets/www/fonts
+          mkdir -p src/main/assets/www/fonts
           cd app/src/main/assets/www/fonts
           base=https://cdn.jsdelivr.net/npm/@fontsource
           curl -fsSL -o dela-gothic-one-400.woff2 $base/dela-gothic-one/files/dela-gothic-one-latin-400-normal.woff2 || true
@@ -36,8 +36,7 @@ jobs:
       - name: Compiler
         run: |
           gradle --no-daemon assembleRelease
-          cp app/build/outputs/apk/release/app-release.apk Koma.apk
-
+                   cp build/outputs/apk/release/*.apk Koma.apk
       - uses: actions/upload-artifact@v4
         with:
           name: Koma-apk
