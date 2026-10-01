@@ -1,0 +1,49 @@
+name: Construire l'APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Télécharger les polices
+        run: |
+          mkdir -p app/src/main/assets/www/fonts
+          cd app/src/main/assets/www/fonts
+          base=https://cdn.jsdelivr.net/npm/@fontsource
+          curl -fsSL -o dela-gothic-one-400.woff2 $base/dela-gothic-one/files/dela-gothic-one-latin-400-normal.woff2 || true
+          for w in 400 500 700; do
+            curl -fsSL -o zen-kaku-gothic-new-$w.woff2 $base/zen-kaku-gothic-new/files/zen-kaku-gothic-new-latin-$w-normal.woff2 || true
+          done
+          ls -la
+
+      - name: Compiler
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleRelease
+          cp app/build/outputs/apk/release/app-release.apk Koma.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Koma-apk
+          path: Koma.apk
+
+      - name: Publier une release (lien de téléchargement direct)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Koma build ${{ github.run_number }}
+          files: Koma.apk
