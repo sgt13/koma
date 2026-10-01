@@ -1,5 +1,5 @@
 plugins {
-    id 'com.android.application'
+    id 'com.android.application' version '8.7.3'
 }
 
 android {
@@ -14,8 +14,6 @@ android {
         versionName '1.0'
     }
 
-    // Clé incluse dans le projet : chaque nouvelle version s'installe par-dessus l'ancienne
-    // sans perdre tes dossiers ni ta progression.
     signingConfigs {
         koma {
             storeFile file('koma.keystore')
