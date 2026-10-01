@@ -417,7 +417,12 @@ function learnColor(img, series) {
     document.querySelectorAll('.bshelf').forEach(sh => { if (sh.dataset.series === series) { sh.style.setProperty('--sc', c1); sh.style.setProperty('--sc2', c2); } });
   } catch {}
 }
-function tomeNo(b, i) { const m = String(b.title).match(/(\d+)(?!.*\d)/); return m ? String(+m[1]) : String(i + 1); }
+function tomeNo(b, i) {
+  const t = String(b.title);
+  // d'abord « T40 », « Tome 40 », « Vol. 40 », « #40 » ; sinon le dernier nombre du nom
+  const m = t.match(/(?:^|[^a-z])(?:t|tome|vol|volume|#)\.?\s*(\d+)/i) || t.match(/(\d+)(?!.*\d)/);
+  return m ? String(+m[1]) : String(i + 1);
+}
 function shelfFor(name, list) {
   const sec = document.createElement('section'); sec.className = 'bshelf'; sec.dataset.series = name;
   const [c1, c2] = shelfColors(name); sec.style.setProperty('--sc', c1); sec.style.setProperty('--sc2', c2);
