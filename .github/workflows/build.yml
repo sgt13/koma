@@ -19,6 +19,10 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+
       - name: Télécharger les polices
         run: |
           mkdir -p app/src/main/assets/www/fonts
@@ -28,12 +32,10 @@ jobs:
           for w in 400 500 700; do
             curl -fsSL -o zen-kaku-gothic-new-$w.woff2 $base/zen-kaku-gothic-new/files/zen-kaku-gothic-new-latin-$w-normal.woff2 || true
           done
-          ls -la
 
       - name: Compiler
         run: |
-          chmod +x gradlew
-          ./gradlew --no-daemon assembleRelease
+          gradle --no-daemon assembleRelease
           cp app/build/outputs/apk/release/app-release.apk Koma.apk
 
       - uses: actions/upload-artifact@v4
@@ -41,7 +43,7 @@ jobs:
           name: Koma-apk
           path: Koma.apk
 
-      - name: Publier une release (lien de téléchargement direct)
+      - name: Publier une release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
