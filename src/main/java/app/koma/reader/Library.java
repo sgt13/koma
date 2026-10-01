@@ -533,6 +533,19 @@ final class Library {
         return bm;
     }
 
+    /** Fichier du cache correspondant à une URL de page servie à la WebView. */
+    File fileForUrl(String url) {
+        if (url == null || !url.startsWith(URL_BASE)) return null;
+        try {
+            File root = cacheRoot().getCanonicalFile();
+            File f = new File(root, url.substring(URL_BASE.length())).getCanonicalFile();
+            if (!f.getPath().startsWith(root.getPath()) || !f.isFile()) return null;
+            return f;
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
     /* ======================= cache ======================= */
 
     private void trim(String keep) {
