@@ -147,6 +147,40 @@ body.dragging .dropzone{border-color:var(--riso-pink);color:var(--paper)}
 .empty h2{margin:0;font-family:var(--display);font-weight:400;font-size:22px;color:var(--paper);text-wrap:balance}
 .empty code{background:var(--ink-3);color:var(--paper);padding:1px 6px;border-radius:4px;font-size:13px}
 .noresult{color:var(--muted);margin:0}
+
+/* ---------- Vue étagère ---------- */
+.libbar{display:flex;align-items:center;gap:10px}
+.libbar #search{flex:1;min-width:0}
+.seg{flex:none;display:flex;background:var(--ink-2);border:1.5px solid var(--ink-3);border-radius:999px;padding:3px}
+.seg button{border:0;background:transparent;cursor:pointer;font-size:12.5px;font-weight:700;padding:7px 12px;border-radius:999px;color:var(--muted)}
+.seg button.on{background:var(--paper);color:var(--ink)}
+.bshelf{min-width:0}
+.bshelf .shead{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin:0 2px 8px}
+.bshelf .shead h2{font-family:var(--display);font-weight:400;font-size:18px;margin:0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bshelf .shead span{font-size:12px;color:var(--muted);white-space:nowrap}
+.brow{display:flex;align-items:flex-end;gap:3px;padding:14px 10px 0;height:178px;overflow-x:auto;scrollbar-width:none}
+.brow::-webkit-scrollbar{display:none}
+.plank{height:14px;border-radius:2px;background:linear-gradient(#4b3d35,#3a2f2a 30%,#2a221e);box-shadow:0 10px 18px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.08)}
+.bface{all:unset;flex:none;width:98px;aspect-ratio:2/3;border-radius:2px 5px 5px 2px;position:relative;overflow:hidden;cursor:pointer;margin-right:6px;
+  background:var(--sc,#3a3550);box-shadow:inset 3px 0 0 rgba(0,0,0,.25),4px 0 10px rgba(0,0,0,.45);transition:transform .2s}
+.bface:active,.bface:hover{transform:translateY(-6px)}
+.bface img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .3s}
+.bface img.ok{opacity:1}
+.bface .ph{position:absolute;left:8px;right:8px;bottom:10px;font-family:var(--display);font-size:13px;line-height:1.05;color:#fff;text-shadow:1px 1px 0 rgba(0,0,0,.6)}
+.bface .n{position:absolute;top:6px;right:6px;font-size:10px;font-weight:700;background:rgba(0,0,0,.6);padding:2px 6px;border-radius:4px;z-index:1}
+.bface .new{position:absolute;top:6px;left:6px;font-size:9px;font-weight:700;letter-spacing:.08em;background:var(--riso-pink);color:var(--ink);padding:2px 6px;border-radius:4px;z-index:1}
+.bspine{all:unset;flex:none;box-sizing:border-box;width:var(--sw,22px);height:var(--sh,92%);border-radius:2px;position:relative;cursor:pointer;
+  background:linear-gradient(90deg,var(--sc,#3a3550),var(--sc2,#24212f));
+  box-shadow:inset -3px 0 0 rgba(0,0,0,.28),inset 2px 0 0 rgba(255,255,255,.12),2px 0 4px rgba(0,0,0,.35);
+  display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:7px 0 7px;transition:transform .2s}
+.bspine:active,.bspine:hover{transform:translateY(-10px)}
+.bspine .v{writing-mode:vertical-rl;transform:rotate(180deg);font-family:var(--display);font-size:10px;letter-spacing:.04em;color:rgba(255,255,255,.92);white-space:nowrap;overflow:hidden;max-height:68%}
+.bspine .num{font-weight:700;font-size:10.5px;color:#fff;background:rgba(0,0,0,.42);border-radius:3px;padding:1px 3px;max-width:90%;overflow:hidden}
+.bspine .rd{position:absolute;left:3px;bottom:2px;height:3px;border-radius:2px;background:var(--riso-pink)}
+.bspine::before,.bspine::after{content:"";position:absolute;left:0;right:0;height:2px;background:rgba(255,255,255,.16)}
+.bspine::before{top:15%}.bspine::after{bottom:15%}
+.bookend{flex:none;width:10px;height:56%;background:linear-gradient(90deg,#55555f,#2e2e36);border-radius:3px 3px 0 0;margin-left:8px}
+#shelves.shelfmode{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,330px),1fr));gap:30px 26px}
 #loader{position:fixed;inset:0;z-index:60;display:grid;place-items:center;background:var(--scrim);padding:0 16px}
 .ld{width:min(340px,100%);display:flex;flex-direction:column;gap:12px;text-align:center}
 .ld b{font-family:var(--display);font-weight:400;font-size:20px;text-wrap:balance}
@@ -174,7 +208,10 @@ body.dragging .dropzone{border-color:var(--riso-pink);color:var(--paper)}
       <div>Choisis le dossier qui contient tes mangas et comics, par exemple <code>Download</code> ou <code>Manga</code>. Koma y cherche les <b>.cbz</b>, <b>.cbr</b>, <b>.pdf</b> et les dossiers d'images, sous-dossiers compris.</div>
       <button class="btn primary" id="emptyAdd">Choisir un dossier</button>
     </div>
-    <input type="search" id="search" placeholder="Rechercher un titre ou une série" autocomplete="off">
+    <div class="libbar">
+      <input type="search" id="search" placeholder="Rechercher…" autocomplete="off">
+      <div class="seg" id="viewSeg" role="group" aria-label="Affichage"><button data-v="grid">Grille</button><button data-v="shelf">Étagère</button></div>
+    </div>
     <section id="continue" hidden><h2 class="sec">Reprendre</h2><div class="row" id="contRow"></div></section>
     <div id="shelves"></div>
     <p class="noresult" id="noResult" hidden>Aucun album ne correspond à cette recherche.</p>
@@ -333,17 +370,21 @@ function renderLibrary() {
 
   // Étagères par série
   const shelves = $('#shelves'); shelves.innerHTML = '';
+  const shelfMode = S.libView === 'shelf';
+  shelves.classList.toggle('shelfmode', shelfMode);
   const groups = new Map();
   for (const b of books) { const k = b.series || 'Sans série'; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(b); }
   const keys = [...groups.keys()].sort((a, b) => collator.compare(a, b));
   for (const k of keys) {
     const list = groups.get(k).sort((a, b) => collator.compare(a.title, b.title));
+    if (shelfMode) { shelves.appendChild(shelfFor(k, list)); continue; }
     const sec = document.createElement('section'); sec.className = 'shelf';
     sec.innerHTML = `<h2 class="sec">${esc(k)} <span>${list.length} ${list.length > 1 ? 'albums' : 'album'}</span></h2><div class="grid"></div>`;
     const grid = sec.querySelector('.grid'); list.forEach(b => grid.appendChild(cardFor(b)));
     shelves.appendChild(sec);
   }
-  if (S.demo && (!q || match(S.demo))) {
+  if (S.demo && (!q || match(S.demo)) && shelfMode) shelves.appendChild(shelfFor('Pour essayer', [S.demo]));
+  else if (S.demo && (!q || match(S.demo))) {
     const sec = document.createElement('section'); sec.className = 'shelf';
     sec.innerHTML = `<h2 class="sec">Pour essayer <span>1 album</span></h2><div class="grid"></div>`;
     sec.querySelector('.grid').appendChild(cardFor(S.demo));
@@ -353,6 +394,69 @@ function renderLibrary() {
   $('#noResult').hidden = !(q && !books.length && !(S.demo && match(S.demo)));
 }
 $('#search').addEventListener('input', () => renderLibrary());
+/* ----- vue étagère ----- */
+const seriesColor = new Map();   // série -> [couleur, couleur sombre]
+function hueOf(str) { let h = 0; for (const c of str) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h % 360; }
+function shelfColors(series) {
+  if (seriesColor.has(series)) return seriesColor.get(series);
+  const h = hueOf(series); return [`hsl(${h} 45% 38%)`, `hsl(${h} 50% 22%)`];
+}
+// couleur dominante d'une couverture, pour teinter les tranches de la série
+function learnColor(img, series) {
+  if (seriesColor.has(series)) return;
+  try {
+    const c = document.createElement('canvas'); c.width = c.height = 12;
+    const x = c.getContext('2d'); x.drawImage(img, 0, 0, 12, 12);
+    const d = x.getImageData(0, 0, 12, 12).data; let r = 0, g = 0, b = 0, n = 0;
+    for (let i = 0; i < d.length; i += 4) { const l = d[i] + d[i + 1] + d[i + 2]; if (l > 60 && l < 690) { r += d[i]; g += d[i + 1]; b += d[i + 2]; n++; } }
+    if (!n) return;
+    r /= n; g /= n; b /= n;
+    const k = Math.min(1, 150 / Math.max(r, g, b, 1));
+    const c1 = `rgb(${r * k | 0},${g * k | 0},${b * k | 0})`, c2 = `rgb(${r * k * .55 | 0},${g * k * .55 | 0},${b * k * .55 | 0})`;
+    seriesColor.set(series, [c1, c2]);
+    document.querySelectorAll('.bshelf').forEach(sh => { if (sh.dataset.series === series) { sh.style.setProperty('--sc', c1); sh.style.setProperty('--sc2', c2); } });
+  } catch {}
+}
+function tomeNo(b, i) { const m = String(b.title).match(/(\d+)(?!.*\d)/); return m ? String(+m[1]) : String(i + 1); }
+function shelfFor(name, list) {
+  const sec = document.createElement('section'); sec.className = 'bshelf'; sec.dataset.series = name;
+  const [c1, c2] = shelfColors(name); sec.style.setProperty('--sc', c1); sec.style.setProperty('--sc2', c2);
+  const readN = list.filter(b => { const n = pagesOf(b); return n > 1 && progressOf(b) >= n - 1; }).length;
+  sec.innerHTML = `<div class="shead"><h2>${esc(name)}</h2><span>${list.length} ${list.length > 1 ? 'tomes' : 'tome'} · ${readN} lu${readN > 1 ? 's' : ''}</span></div><div class="brow"></div><div class="plank"></div>`;
+  const row = sec.querySelector('.brow');
+  const last = list[list.length - 1];
+  // le dernier tome posé de face
+  const face = document.createElement('button'); face.className = 'bface';
+  const src = last.demo ? demoCover : coverMap.get(last.id);
+  const opened = ls.get('last.' + last.id, 0);
+  face.innerHTML = `${opened ? '' : '<span class="new">NEW</span>'}<span class="n">T.${esc(tomeNo(last, list.length - 1))}</span><span class="ph">${esc(name)}</span><img alt="" data-cover="${esc(last.id)}" ${src ? `src="${src}"` : ''}>`;
+  face.setAttribute('aria-label', 'Lire ' + last.title);
+  const img = face.querySelector('img');
+  img.onload = () => { img.classList.add('ok'); learnColor(img, name); };
+  if (!src && !last.demo && io) io.observe(img);
+  face.onclick = () => openBook(last);
+  row.appendChild(face);
+  // les autres sur la tranche
+  list.slice(0, -1).forEach((b, i) => {
+    const sp = document.createElement('button'); sp.className = 'bspine';
+    const n = pagesOf(b), pos = progressOf(b);
+    const pct = n > 1 ? Math.min(1, pos / (n - 1)) : 0;
+    sp.style.setProperty('--sw', (20 + (i % 3)) + 'px');
+    sp.style.setProperty('--sh', (86 + (i * 37 % 10)) + '%');
+    if (i % 2) sp.style.background = 'linear-gradient(90deg,var(--sc2),var(--sc))';
+    sp.innerHTML = `<span class="v">${esc(name.toUpperCase())}</span><span class="num">${esc(tomeNo(b, i))}</span>${pct > 0 ? `<span class="rd" style="width:calc(${Math.max(.15, pct) * 100}% - 6px)"></span>` : ''}`;
+    sp.setAttribute('aria-label', 'Lire ' + b.title);
+    sp.onclick = () => openBook(b);
+    row.appendChild(sp);
+  });
+  const end = document.createElement('span'); end.className = 'bookend'; row.appendChild(end);
+  return sec;
+}
+S.libView = ls.get('libView', 'grid');
+function updateViewSeg() { document.querySelectorAll('#viewSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === S.libView)); }
+document.querySelectorAll('#viewSeg button').forEach(b => b.onclick = () => { S.libView = b.dataset.v; ls.set('libView', S.libView); updateViewSeg(); renderLibrary(); });
+updateViewSeg();
+
 
 function scanState(text) { const el = $('#scanState'); el.hidden = !text; el.textContent = text || ''; }
 function startScan() {
