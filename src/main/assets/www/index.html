@@ -402,7 +402,13 @@ window.koma = {
   back() {
     if (!$('#loader').hidden) return true;
     if (S.bubbleMode) { exitBubble(); return true; }
-    if (!reader.hidden) { zoomed() ? resetCam(true) : closeBook(true); return true; }
+    if (!reader.hidden) {
+      // 1er retour : afficher les menus (sens, vue, bulles…) ; 2e retour : bibliothèque
+      if (zoomed()) resetCam(true);
+      else if (reader.classList.contains('ui-off')) setUI(true);
+      else closeBook(true);
+      return true;
+    }
     if ($('#search').value) { $('#search').value = ''; renderLibrary(); return true; }
     return false;
   }
@@ -804,7 +810,7 @@ function holeRatio(a, r) {
 }
 // silhouette exacte de la bulle : intérieur + texte + contour, pour la découper hors de la page
 function regionMask(a, r) {
-  const { w, h, lum } = a, thr = a.thr, G = Math.round(6 * a.sc), grow = Math.max(4, Math.round(3 * a.sc) + 1);
+  const { w, h, lum } = a, thr = a.thr, G = Math.round(6 * a.sc), grow = Math.max(4, Math.round(3 * a.sc) + 2), dark = Math.min(a.thr * 0.68, 150);
   const x0 = Math.max(0, r.x0 - G), y0 = Math.max(0, r.y0 - G), x1 = Math.min(w - 1, r.x1 + G), y1 = Math.min(h - 1, r.y1 + G);
   const mw = x1 - x0 + 1, mh = y1 - y0 + 1, N = mw * mh, M = new Uint8Array(N);
   for (let k = 0; k < r.n; k++) { const i = r.q[k]; M[(((i / w) | 0) - y0) * mw + (i % w - x0)] = 1; }
@@ -825,7 +831,7 @@ function regionMask(a, r) {
     for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) {
       const j = y * mw + x; if (M[j]) continue;
       if ((x > 0 && M[j - 1]) || (x < mw - 1 && M[j + 1]) || (y > 0 && M[j - mw]) || (y < mh - 1 && M[j + mw])) {
-        if (it === 0 || lum[(y + y0) * w + (x + x0)] < thr) add.push(j);
+        if (it === 0 || lum[(y + y0) * w + (x + x0)] < dark) add.push(j);
       }
     }
     for (const j of add) M[j] = 1;
@@ -976,6 +982,8 @@ function bubblesFromText(a, blocks) {
   for (const b of blocks) {
     const txt = (b.t || '').replace(/[^\p{L}\p{N}?!]/gu, '');
     if (!txt.length) continue;
+    // les onomatopées (THD, CRCK…) sont écrites bien plus gros que les dialogues
+    if ((b.lh || b.h) > nh * 0.03) continue;
     const bx0 = b.x * sx, by0 = b.y * sy, bx1 = (b.x + b.w) * sx, by1 = (b.y + b.h) * sy;
     if (out.some(o => o._a && o._a[0] <= bx0 + 3 && o._a[2] >= bx1 - 3 && o._a[1] <= by0 + 3 && o._a[3] >= by1 - 3)) continue;
     const cx = (bx0 + bx1) / 2, cy = (by0 + by1) / 2, hw = (bx1 - bx0) / 2, hh = (by1 - by0) / 2;
@@ -994,14 +1002,17 @@ function bubblesFromText(a, blocks) {
       if (r.over || r.area > N * 0.12 || (r.border && r.area > N * 0.03)) continue;
       const tx = hw * 0.3, ty = hh * 0.3;
       if (!(r.x0 <= bx0 + tx && r.x1 >= bx1 - tx && r.y0 <= by0 + ty && r.y1 >= by1 - ty)) continue;
-      if ((r.x1 - r.x0 + 1) * (r.y1 - r.y0 + 1) > (bx1 - bx0) * (by1 - by0) * 14) continue;
+      const rw = r.x1 - r.x0 + 1, rh = r.y1 - r.y0 + 1;
+      if (rw * rh > (bx1 - bx0) * (by1 - by0) * 8) continue;
+      if (rw > w * 0.6 || rh > h * 0.5) continue;
+      if (typeof edgeDark === 'function' && edgeDark(a, r) < 0.55) continue;
       if (!best || r.area > best.area) { best = r; best.q = r.q.slice(0, r.n); }
     }
     if (best) {
       const o = toImgRect(a, best, true); o._a = [best.x0, best.y0, best.x1, best.y1]; out.push(o);
     } else {
       // texte sans bulle autour : cartouche simple ; les grosses onomatopées sont ignorées
-      if ((b.lh || b.h) > nh * 0.035) continue;
+      if ((b.lh || b.h) < nh * 0.006) continue;
       const pad = Math.max(b.h, b.w) * 0.1 + 8;
       out.push({ x: b.x - pad, y: b.y - pad, w: b.w + 2 * pad, h: b.h + 2 * pad, _a: [bx0, by0, bx1, by1] });
     }
