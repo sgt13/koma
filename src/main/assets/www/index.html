@@ -88,6 +88,13 @@ body.dragging .dropzone{border-color:var(--riso-pink);color:var(--paper)}
 .face.back.ghost img{visibility:visible;opacity:.1;transform:scaleX(-1)}
 .spine{position:absolute;top:0;bottom:0;width:70px;margin-left:-35px;z-index:4;pointer-events:none;
   background:linear-gradient(90deg,transparent,rgba(0,0,0,.12) 40%,rgba(0,0,0,.3) 50%,rgba(0,0,0,.12) 60%,transparent)}
+#popLayer{position:absolute;inset:0;z-index:12;pointer-events:none;background:rgba(10,9,14,0);transition:background .25s}
+#popLayer.on{background:rgba(10,9,14,.34)}
+.pop{position:absolute;transform-origin:0 0;filter:drop-shadow(0 12px 22px rgba(0,0,0,.65)) drop-shadow(0 0 2px rgba(0,0,0,.4));
+  transition:transform .34s cubic-bezier(.2,.9,.25,1.12),opacity .2s ease;will-change:transform}
+.pop-in{position:absolute;inset:0;background-repeat:no-repeat;-webkit-mask-size:100% 100%;mask-size:100% 100%;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat}
+.pop-in.box{background-color:var(--page);border-radius:16px}
+.pop.out{transition:transform .24s ease-in,opacity .24s ease-in;opacity:0!important}
 #spot{position:absolute;z-index:10;pointer-events:none;border-radius:16px;box-shadow:0 0 0 200vmax rgba(12,11,16,.62);opacity:0;transition:opacity .22s}
 #spot.on{opacity:1}
 
@@ -184,11 +191,13 @@ body.dragging .dropzone{border-color:var(--riso-pink);color:var(--paper)}
   <div id="stage">
     <div id="cam"><div id="book"></div></div>
     <div id="spot"></div>
+    <div id="popLayer"></div>
   </div>
   <header class="bar top">
     <button class="ibtn" id="back" aria-label="Retour à la bibliothèque"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
     <div class="rtitle" id="rtitle"></div>
     <button class="chip" id="dirBtn"></button>
+    <button class="chip" id="bubBtn"></button>
     <button class="chip" id="layBtn"></button>
     <button class="ibtn" id="fsBtn" aria-label="Plein écran"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
   </header>
@@ -251,7 +260,7 @@ const S = {
   books: [], folders: [], demo: null, book: null, urls: [], blobUrls: false, imgs: [], analysis: new Map(), bubbleCache: new Map(),
   dir: 'ltr', layoutMode: ls.get('layout', 'auto'), spread: false, views: [], vi: 0,
   pageW: 0, pageH: 0, bookX: 0, bookY: 0, aspect: 0.68,
-  els: {}, flipping: null, cam: { s: 1, x: 0, y: 0 }, bubbleMode: false, seq: null, zi: -1
+  autoBubble: ls.get('autoBubble', true), els: {}, flipping: null, cam: { s: 1, x: 0, y: 0 }, bubbleMode: false, seq: null, zi: -1
 };
 const coverMap = new Map();      // id -> url de couverture
 const coverAsked = new Set();
@@ -386,11 +395,13 @@ window.koma = {
   volume(d) {
     if (reader.hidden) return;
     const forward = d > 0;
-    if (S.bubbleMode && zoomed()) bubbleNav(forward);
+    if (S.bubbleMode) bubbleNav(forward);
+    else if (S.autoBubble && forward) startBubbles(true).then(ok => { if (!ok) flip(S.dir === 'ltr' ? 'left' : 'right'); });
     else flip(forward === (S.dir === 'ltr') ? 'left' : 'right');
   },
   back() {
     if (!$('#loader').hidden) return true;
+    if (S.bubbleMode) { exitBubble(); return true; }
     if (!reader.hidden) { zoomed() ? resetCam(true) : closeBook(true); return true; }
     if ($('#search').value) { $('#search').value = ''; renderLibrary(); return true; }
     return false;
@@ -434,7 +445,7 @@ async function openBook(b) {
     closeBook(false);
     S.book = b; S.dir = dirOf(b); S.urls = urls; S.blobUrls = blob;
     S.imgs = new Array(urls.length).fill(null);
-    S.analysis.clear(); S.bubbleCache.clear();
+    S.analysis.clear(); S.bubbleCache.clear(); textCache.clear();
     ls.set('last.' + b.id, Date.now());
     const first = await loadImg(0);
     S.aspect = first.naturalWidth && first.naturalHeight ? first.naturalWidth / first.naturalHeight : 0.68;
@@ -701,7 +712,7 @@ function applyCam(anim) {
   cam.style.transition = anim && !reduced ? 'transform .45s cubic-bezier(.2,.8,.2,1)' : 'none';
   cam.style.transform = `translate(${S.cam.x}px,${S.cam.y}px) scale(${S.cam.s})`;
 }
-function resetCam(anim) { S.cam = { s: 1, x: 0, y: 0 }; S.bubbleMode = false; S.seq = null; hideSpot(); applyCam(anim); }
+function resetCam(anim) { S.cam = { s: 1, x: 0, y: 0 }; clearBubble(); hideSpot(); applyCam(anim); }
 function hideSpot() { spot.classList.remove('on'); clearTimeout(S.spotT); }
 function showSpot(r) {
   const s = S.cam.s, p = 8;
@@ -728,7 +739,7 @@ async function getAnalysis(idx) {
   const im = await loadImg(idx);
   const nw = im.naturalWidth, nh = im.naturalHeight;
   if (!nw || !nh) return null;
-  const k = Math.min(1, 640 / Math.max(nw, nh)), w = Math.max(1, Math.round(nw * k)), h = Math.max(1, Math.round(nh * k));
+  const k = Math.min(1, 1400 / Math.max(nw, nh)), w = Math.max(1, Math.round(nw * k)), h = Math.max(1, Math.round(nh * k));
   const c = document.createElement('canvas'); c.width = w; c.height = h;
   const ctx = c.getContext('2d', { willReadFrequently: true });
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h); ctx.drawImage(im, 0, 0, w, h);
@@ -737,7 +748,7 @@ async function getAnalysis(idx) {
   for (let i = 0, j = 0; i < N; i++, j += 4) { const v = (d[j] * 299 + d[j + 1] * 587 + d[j + 2] * 114) / 1000 | 0; lum[i] = v; hist[v]++; }
   // niveau du papier = 90e centile
   let acc = 0, p90 = 255; for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= N * 0.9) { p90 = v; break; } }
-  const thr = Math.max(130, p90 * 0.86), ink = p90 * 0.5;
+  const thr = Math.max(140, Math.min(p90, 248) * 0.85), ink = Math.min(p90, 248) * 0.5;
   const light = new Uint8Array(N); for (let i = 0; i < N; i++) light[i] = lum[i] >= thr ? 1 : 0;
   // érosion : referme les petites fuites dans le contour des bulles
   const open = new Uint8Array(N);
@@ -745,27 +756,27 @@ async function getAnalysis(idx) {
     const i = y * w + x;
     if (light[i] && light[i - 1] && light[i + 1] && light[i - w] && light[i + w]) open[i] = 1;
   }
-  const a = { w, h, nw, nh, lum, open, ink };
-  S.analysis.set(idx, a); return a;
+  const a = { w, h, nw, nh, lum, open, ink, thr, sc: Math.max(w, h) / 640 };
+  S.analysis.set(idx, a);
+  if (S.analysis.size > 6) S.analysis.delete(S.analysis.keys().next().value);
+  return a;
 }
-function flood(a, seed, vis, cap) {
-  const { w, h, open } = a; const q = new Int32Array(Math.min(cap + 8, w * h)); let qh = 0, qt = 0;
+function flood(a, seed, vis, cap, buf) {
+  const { w, h, open } = a, N = w * h;
+  const q = buf && buf.length >= Math.min(cap + 8, N) ? buf : new Int32Array(Math.min(cap + 8, N));
+  let qh = 0, qt = 0;
   q[qt++] = seed; vis[seed] = 1;
   let area = 0, x0 = w, y0 = h, x1 = 0, y1 = 0, border = false, over = false;
+  const push = n => { if (vis[n] || !open[n]) return; vis[n] = 1; if (qt >= q.length) { over = true; return; } q[qt++] = n; };
   while (qh < qt) {
     const i = q[qh++]; area++;
     const x = i % w, y = (i / w) | 0;
     if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
     if (x <= 1 || y <= 1 || x >= w - 2 || y >= h - 2) border = true;
-    const nb = [i - 1, i + 1, i - w, i + w];
-    for (let t = 0; t < 4; t++) {
-      const n = nb[t];
-      if (n < 0 || n >= w * h || vis[n] || !open[n]) continue;
-      if ((t === 0 && x === 0) || (t === 1 && x === w - 1)) continue;
-      vis[n] = 1;
-      if (qt >= q.length) { over = true; continue; }
-      q[qt++] = n;
-    }
+    if (x > 0) push(i - 1);
+    if (x < w - 1) push(i + 1);
+    if (y > 0) push(i - w);
+    if (y < h - 1) push(i + w);
   }
   return { area, x0, y0, x1, y1, border, over, q, n: qt };
 }
@@ -791,59 +802,234 @@ function holeRatio(a, r) {
   let holes = 0; for (let j = 0; j < M.length; j++) if (!M[j]) holes++;
   return holes / r.area;
 }
-function toImgRect(a, r) {
-  const sx = a.nw / a.w, sy = a.nh / a.h, g = 2;
-  return { x: (r.x0 - g) * sx, y: (r.y0 - g) * sy, w: (r.x1 - r.x0 + 1 + 2 * g) * sx, h: (r.y1 - r.y0 + 1 + 2 * g) * sy };
+// silhouette exacte de la bulle : intérieur + texte + contour, pour la découper hors de la page
+function regionMask(a, r) {
+  const { w, h, lum } = a, thr = a.thr, G = Math.round(6 * a.sc), grow = Math.max(4, Math.round(3 * a.sc) + 1);
+  const x0 = Math.max(0, r.x0 - G), y0 = Math.max(0, r.y0 - G), x1 = Math.min(w - 1, r.x1 + G), y1 = Math.min(h - 1, r.y1 + G);
+  const mw = x1 - x0 + 1, mh = y1 - y0 + 1, N = mw * mh, M = new Uint8Array(N);
+  for (let k = 0; k < r.n; k++) { const i = r.q[k]; M[(((i / w) | 0) - y0) * mw + (i % w - x0)] = 1; }
+  // boucher les trous (les lettres) : tout ce qui n'est pas joignable depuis le bord est dans la bulle
+  const outside = new Uint8Array(N), st = [];
+  for (let x = 0; x < mw; x++) st.push(x, (mh - 1) * mw + x);
+  for (let y = 0; y < mh; y++) st.push(y * mw, y * mw + mw - 1);
+  while (st.length) {
+    const j = st.pop(); if (outside[j] || M[j]) continue; outside[j] = 1;
+    const x = j % mw;
+    if (x > 0) st.push(j - 1); if (x < mw - 1) st.push(j + 1);
+    if (j >= mw) st.push(j - mw); if (j < N - mw) st.push(j + mw);
+  }
+  for (let j = 0; j < N; j++) if (!outside[j]) M[j] = 1;
+  // élargir jusqu'au trait du contour (pixels sombres seulement), puis 1 px d'anticrénelage
+  for (let it = 0; it < grow; it++) {
+    const add = [];
+    for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) {
+      const j = y * mw + x; if (M[j]) continue;
+      if ((x > 0 && M[j - 1]) || (x < mw - 1 && M[j + 1]) || (y > 0 && M[j - mw]) || (y < mh - 1 && M[j + mw])) {
+        if (it === 0 || lum[(y + y0) * w + (x + x0)] < thr) add.push(j);
+      }
+    }
+    for (const j of add) M[j] = 1;
+  }
+  const c = document.createElement('canvas'); c.width = mw; c.height = mh;
+  const cx = c.getContext('2d'), id = cx.createImageData(mw, mh);
+  for (let j = 0; j < N; j++) id.data[j * 4 + 3] = M[j] ? 255 : 0;
+  cx.putImageData(id, 0, 0);
+  const k = Math.max(1, Math.round(4 / a.sc)), c2 = document.createElement('canvas'); c2.width = mw * k; c2.height = mh * k;
+  const cx2 = c2.getContext('2d'); cx2.imageSmoothingEnabled = true; cx2.imageSmoothingQuality = 'high';
+  try { cx2.filter = `blur(${Math.max(0.6, k / 4)}px)`; } catch {}
+  cx2.drawImage(c, 0, 0, mw * k, mh * k);
+  const sx = a.nw / a.w, sy = a.nh / a.h;
+  return { url: c2.toDataURL('image/png'), x: x0 * sx, y: y0 * sy, w: mw * sx, h: mh * sy };
 }
-// bulle sous le doigt (coordonnées image normalisées u,v)
+function toImgRect(a, r, withMask) {
+  const sx = a.nw / a.w, sy = a.nh / a.h, g = 2;
+  const out = { x: (r.x0 - g) * sx, y: (r.y0 - g) * sy, w: (r.x1 - r.x0 + 1 + 2 * g) * sx, h: (r.y1 - r.y0 + 1 + 2 * g) * sy };
+  if (withMask && r.q) { try { out.mask = regionMask(a, r); } catch (e) { console.warn(e); } }
+  return out;
+}
+// une vraie bulle : forme compacte, pas collée au bord, et contient du texte (plusieurs petits trous d'encre)
+function isBubble(a, r) {
+  const N = a.w * a.h, bw = r.x1 - r.x0 + 1, bh = r.y1 - r.y0 + 1;
+  if (r.over) return false;
+  if (r.border && r.area > N * 0.03) return false;
+  if (r.area < Math.max(250, N * 0.0004) || r.area > N * 0.12 || bw < 12 || bh < 10) return false;
+  if (r.area / (bw * bh) < 0.22) return false;
+  if (bw / bh > 6 || bh / bw > 6) return false;
+  // l'intérieur d'une bulle est un aplat (blanc ou couleur pâle) : pas de dégradé ni de texture
+  let sum = 0, sum2 = 0;
+  for (let k = 0; k < r.n; k++) { const v = a.lum[r.q[k]]; sum += v; sum2 += v * v; }
+  const mean = sum / r.n, sd = Math.sqrt(Math.max(0, sum2 / r.n - mean * mean));
+  if (sd > 22) return false;
+  const ir = inkRatio(a, r);
+  if (ir < 0.012 || ir > 0.5) return false;
+  const hs = holeStats(a, r);
+  if (hs.ratio < 0.03 || hs.ratio > 0.9) return false;
+  if (hs.count < 2 || hs.max > r.area * 0.25) return false;
+  // une bulle est entourée d'un trait : la plupart de son pourtour touche du sombre
+  if (edgeDark(a, r) < 0.72) return false;
+  return true;
+}
+// part du pourtour de la zone qui touche un trait sombre (le contour de la bulle)
+function edgeDark(a, r) {
+  const { w, h, lum } = a, bw = r.x1 - r.x0 + 1, bh = r.y1 - r.y0 + 1, N = bw * bh, M = new Uint8Array(N);
+  for (let k = 0; k < r.n; k++) { const i = r.q[k]; M[(((i / w) | 0) - r.y0) * bw + (i % w - r.x0)] = 1; }
+  const st = [];
+  for (let x = 0; x < bw; x++) st.push(x, (bh - 1) * bw + x);
+  for (let y = 0; y < bh; y++) st.push(y * bw, y * bw + bw - 1);
+  while (st.length) {
+    const j = st.pop(); if (M[j]) continue; M[j] = 2;
+    const x = j % bw;
+    if (x > 0) st.push(j - 1); if (x < bw - 1) st.push(j + 1);
+    if (j >= bw) st.push(j - bw); if (j < N - bw) st.push(j + bw);
+  }
+  const dark = a.thr * 0.62, reach = Math.max(4, Math.round(3 * a.sc) + 2);
+  let tot = 0, hit = 0;
+  const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+  for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) {
+    if (M[y * bw + x] !== 1) continue;
+    for (const [dx, dy] of dirs) {
+      const nx = x + dx, ny = y + dy;
+      const outside = nx < 0 || ny < 0 || nx >= bw || ny >= bh || M[ny * bw + nx] === 2;
+      if (!outside) continue;
+      tot++;
+      for (let k = 1; k <= reach; k++) {
+        const gx = r.x0 + x + dx * k, gy = r.y0 + y + dy * k;
+        if (gx < 0 || gy < 0 || gx >= w || gy >= h) break;
+        if (lum[gy * w + gx] < dark) { hit++; break; }
+      }
+    }
+  }
+  return tot ? hit / tot : 0;
+}
+function holeStats(a, r) {
+  const { w } = a, bw = r.x1 - r.x0 + 1, bh = r.y1 - r.y0 + 1, N = bw * bh, M = new Uint8Array(N);
+  for (let k = 0; k < r.n; k++) { const i = r.q[k]; M[(((i / w) | 0) - r.y0) * bw + (i % w - r.x0)] = 1; }
+  const st = [];
+  for (let x = 0; x < bw; x++) st.push(x, (bh - 1) * bw + x);
+  for (let y = 0; y < bh; y++) st.push(y * bw, y * bw + bw - 1);
+  while (st.length) {
+    const j = st.pop(); if (M[j]) continue; M[j] = 2;
+    const x = j % bw;
+    if (x > 0) st.push(j - 1); if (x < bw - 1) st.push(j + 1);
+    if (j >= bw) st.push(j - bw); if (j < N - bw) st.push(j + bw);
+  }
+  let total = 0, count = 0, max = 0;
+  for (let j0 = 0; j0 < N; j0++) {
+    if (M[j0]) continue;
+    let size = 0; st.push(j0); M[j0] = 3;
+    while (st.length) {
+      const j = st.pop(); size++;
+      const x = j % bw, nb = [x > 0 ? j - 1 : -1, x < bw - 1 ? j + 1 : -1, j - bw, j + bw];
+      for (const n of nb) if (n >= 0 && n < N && !M[n]) { M[n] = 3; st.push(n); }
+    }
+    total += size; count++; if (size > max) max = size;
+  }
+  return { ratio: total / r.area, count, max };
+}
+// bulle sous le doigt (coordonnées image normalisées u,v) — uniquement les vraies bulles
 function bubbleAt(a, u, v) {
   const { w, h, open } = a, N = w * h;
   const cx = clamp(Math.round(u * w), 0, w - 1), cy = clamp(Math.round(v * h), 0, h - 1);
   const seeds = [];
   if (open[cy * w + cx]) seeds.push(cy * w + cx);
-  for (let rad = 2; rad <= 22 && seeds.length < 10; rad += 2) {
+  const maxRad = Math.round(22 * a.sc), step = Math.max(2, Math.round(2 * a.sc));
+  for (let rad = step; rad <= maxRad && seeds.length < 14; rad += step) {
     for (let t = 0; t < 8; t++) {
       const ang = t * Math.PI / 4, x = Math.round(cx + Math.cos(ang) * rad), y = Math.round(cy + Math.sin(ang) * rad);
       if (x >= 0 && y >= 0 && x < w && y < h && open[y * w + x]) seeds.push(y * w + x);
     }
   }
-  const vis = new Uint8Array(N), cap = Math.round(N * 0.22);
+  const vis = new Uint8Array(N), cap = Math.round(N * 0.14), buf = new Int32Array(cap + 8);
   let best = null;
   for (const s of seeds) {
     if (vis[s]) continue;
-    const r = flood(a, s, vis, cap);
-    const bw = r.x1 - r.x0 + 1, bh = r.y1 - r.y0 + 1;
-    if (r.over || r.area < N * 0.0008 || bw < 8 || bh < 8) continue;
-    if (r.border && r.area > N * 0.05) continue;
+    const r = flood(a, s, vis, cap, buf);
+    if (!isBubble(a, r)) continue;
+    r.q = r.q.slice(0, r.n);
+    // le doigt doit être dans la bulle (boîte englobante)
+    if (cx < r.x0 - 4 || cx > r.x1 + 4 || cy < r.y0 - 4 || cy > r.y1 + 4) continue;
     if (!best || r.area > best.area) best = r;
   }
-  return best ? toImgRect(a, best) : null;
+  return best ? toImgRect(a, best, true) : null;
+}
+/* ----- détection du texte par l'IA de l'appareil (ML Kit, dans l'app Android) ----- */
+const textCache = new Map(), textReq = new Map(); let textSeq = 0;
+window.koma = window.koma || {};
+window.koma.onText = (id, blocks) => { const r = textReq.get(id); if (r) { textReq.delete(id); r(blocks); } };
+function nativeText(idx) {
+  const K = window.KomaNative;
+  if (!K || !K.detectText || !/^https:\/\/appassets\./.test(S.urls[idx] || '')) return Promise.resolve(null);
+  if (textCache.has(idx)) return textCache.get(idx);
+  const id = 't' + (++textSeq);
+  const p = new Promise(res => {
+    textReq.set(id, res);
+    setTimeout(() => { if (textReq.has(id)) { textReq.delete(id); res(null); } }, 20000);
+    K.detectText(id, S.urls[idx]);
+  });
+  textCache.set(idx, p); return p;
+}
+// à partir des blocs de texte trouvés par l'IA : la bulle est la zone claire qui entoure chaque bloc
+function bubblesFromText(a, blocks) {
+  const { w, h, open, nw, nh } = a, N = w * h, sx = w / nw, sy = h / nh;
+  const vis = new Uint8Array(N), cap = Math.round(N * 0.14), buf = new Int32Array(cap + 8), out = [];
+  const R2 = Math.max(2, Math.round(2 * a.sc));
+  for (const b of blocks) {
+    const txt = (b.t || '').replace(/[^\p{L}\p{N}?!]/gu, '');
+    if (!txt.length) continue;
+    const bx0 = b.x * sx, by0 = b.y * sy, bx1 = (b.x + b.w) * sx, by1 = (b.y + b.h) * sy;
+    if (out.some(o => o._a && o._a[0] <= bx0 + 3 && o._a[2] >= bx1 - 3 && o._a[1] <= by0 + 3 && o._a[3] >= by1 - 3)) continue;
+    const cx = (bx0 + bx1) / 2, cy = (by0 + by1) / 2, hw = (bx1 - bx0) / 2, hh = (by1 - by0) / 2;
+    const seeds = [];
+    for (const [fx, fy] of [[0, 0], [-0.5, 0], [0.5, 0], [0, -0.5], [0, 0.5], [-1.08, 0], [1.08, 0], [0, -1.2], [0, 1.2], [-0.7, -1.12], [0.7, 1.12], [-0.7, 1.12], [0.7, -1.12]]) {
+      const x0 = Math.round(cx + fx * hw), y0 = Math.round(cy + fy * hh);
+      found: for (let r = 0; r <= R2 * 2; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+        const x = x0 + dx, y = y0 + dy;
+        if (x >= 0 && y >= 0 && x < w && y < h && open[y * w + x]) { seeds.push(y * w + x); break found; }
+      }
+    }
+    let best = null;
+    for (const s of seeds) {
+      if (vis[s]) continue;
+      const r = flood(a, s, vis, cap, buf);
+      if (r.over || r.area > N * 0.12 || (r.border && r.area > N * 0.03)) continue;
+      const tx = hw * 0.3, ty = hh * 0.3;
+      if (!(r.x0 <= bx0 + tx && r.x1 >= bx1 - tx && r.y0 <= by0 + ty && r.y1 >= by1 - ty)) continue;
+      if ((r.x1 - r.x0 + 1) * (r.y1 - r.y0 + 1) > (bx1 - bx0) * (by1 - by0) * 14) continue;
+      if (!best || r.area > best.area) { best = r; best.q = r.q.slice(0, r.n); }
+    }
+    if (best) {
+      const o = toImgRect(a, best, true); o._a = [best.x0, best.y0, best.x1, best.y1]; out.push(o);
+    } else {
+      // texte sans bulle autour : cartouche simple ; les grosses onomatopées sont ignorées
+      if ((b.lh || b.h) > nh * 0.035) continue;
+      const pad = Math.max(b.h, b.w) * 0.1 + 8;
+      out.push({ x: b.x - pad, y: b.y - pad, w: b.w + 2 * pad, h: b.h + 2 * pad, _a: [bx0, by0, bx1, by1] });
+    }
+  }
+  return out;
 }
 // toutes les bulles d'une page, triées dans l'ordre de lecture
 async function pageBubbles(idx) {
   let list = S.bubbleCache.get(idx);
   if (!list) {
-    const a = await getAnalysis(idx); list = [];
-    if (a) {
-      const { w, h, open } = a, N = w * h, vis = new Uint8Array(N), cap = Math.round(N * 0.14);
-      for (let i = 0; i < N; i++) {
-        if (!open[i] || vis[i]) continue;
-        const r = flood(a, i, vis, cap);
-        if (r.over || r.border) continue;
-        const bw = r.x1 - r.x0 + 1, bh = r.y1 - r.y0 + 1;
-        if (r.area < N * 0.0012 || bw < 10 || bh < 10) continue;
-        if (r.area / (bw * bh) < 0.42) continue;
-        if (bw / bh > 6 || bh / bw > 6) continue;
-        const ir = inkRatio(a, r);
-        if (ir < 0.012 || ir > 0.5) continue;
-        const hr = holeRatio(a, r);
-        if (hr < 0.03 || hr > 0.9) continue;
-        list.push(toImgRect(a, r));
-      }
-    }
+    const a = await getAnalysis(idx);
+    const blocks = a ? await nativeText(idx) : null;
+    list = a && blocks && blocks.length ? bubblesFromText(a, blocks) : heuristicBubbles(a);
     S.bubbleCache.set(idx, list);
   }
   return sortReading(list);
+}
+function heuristicBubbles(a) {
+  const list = [];
+  if (a) {
+      const { w, h, open } = a, N = w * h, vis = new Uint8Array(N), cap = Math.round(N * 0.14), buf = new Int32Array(cap + 8);
+      for (let i = 0; i < N; i++) {
+        if (!open[i] || vis[i]) continue;
+        const r = flood(a, i, vis, cap, buf);
+        if (isBubble(a, r)) list.push(toImgRect(a, r, true));
+      }
+    }
+  return list;
 }
 function sortReading(list) {
   const items = list.slice().sort((a, b) => a.y - b.y), rows = [];
@@ -880,44 +1066,120 @@ function zoomToEntry(e) { const r = entryRect(e); if (r) zoomToRect(r); }
 
 async function onDoubleTap(lx, ly) {
   if (S.flipping) return;
+  if (S.bubbleMode) { exitBubble(); return; }
   if (zoomed()) { resetCam(true); return; }
   // quelle page est sous le doigt ?
   for (const k of ['L', 'R', 'S']) {
     const el = S.els[k]; if (!el || el.dataset.idx === '') continue;
     const idx = +el.dataset.idx, d = drawnRect(el, idx);
     if (lx < d.x || lx > d.x + d.w || ly < d.y || ly > d.y + d.h) continue;
-    const a = await getAnalysis(idx);
-    const hit = a && bubbleAt(a, (lx - d.x) / d.w, (ly - d.y) / d.h);
-    if (!hit) { zoomAtPoint(lx, ly); return; }
+    const u = (lx - d.x) / d.w, v = (ly - d.y) / d.h, px = u * d.nw, py = v * d.nh;
     let seq = await viewSeq();
-    let i = seq.findIndex(e => e.idx === idx && iou(e.r, hit) > 0.35);
+    // d'abord les bulles déjà repérées sur la page (la plus petite qui contient le doigt)
+    let i = -1, bestA = Infinity;
+    seq.forEach((e, j) => {
+      if (e.idx !== idx) return;
+      const r = e.r, m = Math.min(r.w, r.h) * 0.05;
+      if (px >= r.x - m && px <= r.x + r.w + m && py >= r.y - m && py <= r.y + r.h + m && r.w * r.h < bestA) { bestA = r.w * r.h; i = j; }
+    });
     if (i < 0) {
-      const own = sortReading(seq.filter(e => e.idx === idx).map(e => e.r).concat([hit]));
-      const order = S.views[S.vi];
-      seq = order.flatMap(pi => pi === idx ? own.map(r => ({ idx, r })) : seq.filter(e => e.idx === pi));
-      i = seq.findIndex(e => e.r === hit);
+      const a = await getAnalysis(idx);
+      const hit = a && bubbleAt(a, u, v);
+      if (!hit) { toast('Pas de bulle ici', 900); return; }
+      i = seq.findIndex(e => e.idx === idx && iou(e.r, hit) > 0.35);
+      if (i < 0) {
+        const own = sortReading(seq.filter(e => e.idx === idx).map(e => e.r).concat([hit]));
+        seq = S.views[S.vi].flatMap(pi => pi === idx ? own.map(r => ({ idx, r })) : seq.filter(e => e.idx === pi));
+        i = seq.findIndex(e => e.r === hit);
+      }
     }
     S.seq = seq; S.zi = i; S.bubbleMode = true;
-    zoomToEntry(seq[i]); return;
+    popBubble(seq[i]); return;
   }
-  zoomAtPoint(lx, ly);
+}
+
+/* ----- Bubble Zoom : la bulle sort de la page, agrandie, par-dessus la planche assombrie ----- */
+const popLayer = document.getElementById('popLayer');
+let curPop = null;
+function dropPop(anim) {
+  const old = curPop; curPop = null;
+  if (!old) return;
+  if (!anim || reduced) { old.remove(); return; }
+  old.classList.add('out'); old.style.transform = old.dataset.from;
+  setTimeout(() => old.remove(), 260);
+}
+function imgRectToScreen(idx, rr) {
+  const el = slotOf(idx); if (!el) return null;
+  const d = drawnRect(el, idx);
+  return { x: d.x + rr.x / d.nw * d.w, y: d.y + rr.y / d.nh * d.h, w: rr.w / d.nw * d.w, h: rr.h / d.nh * d.h };
+}
+function popBubble(e, from) {
+  const el = slotOf(e.idx); if (!el) return;
+  const mask = e.r.mask, r = imgRectToScreen(e.idx, mask || e.r); if (!r) return;
+  const W = stage.clientWidth, H = stage.clientHeight, m = 12, d = drawnRect(el, e.idx);
+  const pad = mask ? 0 : Math.max(6, Math.min(r.w, r.h) * 0.08);
+  const bx = r.x - pad, by = r.y - pad, bw = r.w + 2 * pad, bh = r.h + 2 * pad;
+  const fit = Math.min((W - 2 * m) / bw, (H * 0.72) / bh);
+  const s = Math.max(Math.min(fit, 3.2), Math.min(fit, 1.35));
+  const fw = bw * s, fh = bh * s;
+  const fx = fw > W - 2 * m ? (W - fw) / 2 : clamp(bx + bw / 2 - fw / 2, m, W - m - fw);
+  const fy = fh > H - 2 * m ? (H - fh) / 2 : clamp(by + bh / 2 - fh / 2, m, H - m - fh);
+  const pop = document.createElement('div'); pop.className = 'pop';
+  Object.assign(pop.style, { left: fx + 'px', top: fy + 'px', width: fw + 'px', height: fh + 'px' });
+  const inner = document.createElement('div'); inner.className = 'pop-in' + (mask ? '' : ' box');
+  Object.assign(inner.style, {
+    backgroundImage: `url("${S.urls[e.idx]}")`,
+    backgroundSize: `${d.w * s}px ${d.h * s}px`,
+    backgroundPosition: `${-(bx - d.x) * s}px ${-(by - d.y) * s}px`
+  });
+  if (mask) {
+    const mu = `url("${mask.url}")`;
+    inner.style.webkitMaskImage = mu; inner.style.maskImage = mu;
+  }
+  pop.appendChild(inner);
+  // la bulle part de sa place sur la page (ou glisse depuis le côté quand on avance)
+  const home = `translate(${bx - fx}px, ${by - fy}px) scale(${1 / s})`;
+  pop.dataset.from = home;
+  pop.style.transform = from === 'next' ? `translateX(${W * 0.35}px) scale(.92)` : from === 'prev' ? `translateX(${-W * 0.35}px) scale(.92)` : home;
+  pop.style.opacity = from ? 0 : 1;
+  dropPop(true);
+  popLayer.appendChild(pop); curPop = pop;
+  popLayer.classList.add('on'); setUI(false);
+  pop.getBoundingClientRect();
+  requestAnimationFrame(() => { pop.style.transform = 'none'; pop.style.opacity = 1; });
+}
+function exitBubble() {
+  dropPop(true); popLayer.classList.remove('on');
+  S.bubbleMode = false; S.seq = null;
+}
+function clearBubble() {
+  if (curPop) { curPop.remove(); curPop = null; }
+  popLayer.classList.remove('on'); S.bubbleMode = false; S.seq = null;
 }
 async function bubbleNav(forward) {
+  if (S.flipping) return;
   const seq = S.seq, i = S.zi + (forward ? 1 : -1);
-  if (seq && i >= 0 && i < seq.length) { S.zi = i; zoomToEntry(seq[i]); return; }
+  if (seq && i >= 0 && i < seq.length) { S.zi = i; popBubble(seq[i], forward ? 'next' : 'prev'); return; }
   const nvi = S.vi + (forward ? 1 : -1);
-  if (nvi < 0 || nvi >= S.views.length) { toast(forward ? 'Dernière page' : 'Première page', 1200); return; }
-  const towards = forward === (S.dir === 'ltr') ? 'left' : 'right';
-  resetCam(true); await wait(reduced ? 0 : 420);
-  flip(towards, async () => {
-    const s = await viewSeq();
-    if (s.length) { S.seq = s; S.zi = forward ? 0 : s.length - 1; S.bubbleMode = true; zoomToEntry(s[S.zi]); }
-  });
+  if (nvi < 0 || nvi >= S.views.length) { exitBubble(); toast(forward ? 'Dernière page' : 'Première page', 1200); return; }
+  dropPop(true); popLayer.classList.remove('on');
+  const auto = S.autoBubble;
+  S.bubbleMode = false; S.seq = null;
+  await wait(reduced ? 0 : 200);
+  // lecture bulle par bulle : la page se tourne et on enchaîne directement sur la bulle suivante
+  flip(forward === (S.dir === 'ltr') ? 'left' : 'right', auto ? () => startBubbles(forward) : null);
+}
+async function startBubbles(forward = true) {
+  const s2 = await viewSeq();
+  if (!s2.length) { toast('Aucune bulle sur cette page', 1100); return false; }
+  S.seq = s2; S.zi = forward ? 0 : s2.length - 1; S.bubbleMode = true;
+  popBubble(S.seq[S.zi]);
+  return true;
 }
 
 /* ----- gestes ----- */
 const ptrs = new Map();
-let g = null, pinch = null, lastTap = null, tapT = null;
+let g = null, pinch = null, lastTap = null, tapT = null, lastMove = {};
 const local = e => { const r = stage.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
 
 stage.addEventListener('pointerdown', e => {
@@ -925,13 +1187,14 @@ stage.addEventListener('pointerdown', e => {
   ptrs.set(e.pointerId, local(e));
   if (ptrs.size === 2) {
     if (g && g.mode === 'flip' && S.flipping) animateCurl(0, 300, () => finishFlip(false));
-    g = null; hideSpot();
+    g = null; hideSpot(); if (S.bubbleMode) exitBubble();
     const [a, b] = [...ptrs.values()];
     pinch = { d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, m0: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, c0: { ...S.cam } };
     return;
   }
   if (ptrs.size > 2 || pinch) return;
   const p = local(e), t = performance.now();
+  lastMove = p;
   g = { x0: p.x, y0: p.y, t0: t, lx: p.x, lt: t, vx: 0, moved: false, mode: null, c0: { ...S.cam } };
 });
 stage.addEventListener('pointermove', e => {
@@ -946,10 +1209,12 @@ stage.addEventListener('pointermove', e => {
   }
   if (!g) return;
   const p = local(e), dx = p.x - g.x0, dy = p.y - g.y0, now = performance.now();
+  lastMove = p;
   if (now > g.lt) { g.vx = g.vx * 0.6 + ((p.x - g.lx) / (now - g.lt)) * 0.4; g.lx = p.x; g.lt = now; }
   if (!g.moved && Math.hypot(dx, dy) > 10) {
     g.moved = true;
-    if (zoomed()) { g.mode = 'pan'; hideSpot(); }
+    if (S.bubbleMode) g.mode = 'bswipe';
+    else if (zoomed()) { g.mode = 'pan'; hideSpot(); }
     else if (Math.abs(dx) > Math.abs(dy) && !S.flipping) { const f = startFlip(dx < 0 ? 'left' : 'right', g.y0 - S.bookY); g.mode = f ? 'flip' : 'none'; if (f) g.dirSign = dx < 0 ? -1 : 1; }
     else g.mode = 'none';
   }
@@ -967,6 +1232,11 @@ function endPointer(e, cancelled) {
   if (pinch) { if (ptrs.size === 0) { pinch = null; if (S.cam.s < 1.08) resetCam(true); } return; }
   if (!g) return;
   const G = g; g = null;
+  if (G.mode === 'bswipe') {
+    const ddx = (lastMove.x || G.x0) - G.x0;
+    if (!cancelled && Math.abs(ddx) > 40) bubbleNav((ddx < 0) === (S.dir === 'ltr'));
+    return;
+  }
   if (G.mode === 'flip' && S.flipping) {
     const fast = G.vx * G.dirSign > 0.45;
     const commit = !cancelled && (S.flipping.p > 0.22 || fast);
@@ -993,9 +1263,25 @@ function handleTap(x, y) {
   lastTap = { t: now, x, y }; clearTimeout(tapT);
   tapT = setTimeout(() => { lastTap = null; onSingleTap(x, y); }, 270);
 }
-function onSingleTap(x) {
+function onSingleTap(x, y) {
   if (S.flipping) return;
-  const rx = x / stage.clientWidth;
+  const rx = x / stage.clientWidth, ry = y / stage.clientHeight;
+  const backSide = S.dir === 'ltr' ? rx < 0.22 : rx > 0.78;
+  if (S.autoBubble && !zoomed()) {
+    // mode bulles : chaque pression affiche la bulle suivante (bord "retour" = précédente, haut = menus)
+    if (ry < 0.12) { setUI(reader.classList.contains('ui-off')); return; }
+    if (S.bubbleMode) { bubbleNav(!backSide); return; }
+    if (backSide) { flip(S.dir === 'ltr' ? 'right' : 'left', () => startBubbles(false)); return; }
+    startBubbles(true).then(ok => { if (!ok) flip(S.dir === 'ltr' ? 'left' : 'right'); });
+    return;
+  }
+  if (S.bubbleMode) {
+    // tape sur la bulle = bulle suivante ; tape à côté = on referme
+    const pr = curPop && curPop.getBoundingClientRect(), sr = stage.getBoundingClientRect();
+    const onPop = pr && x + sr.left >= pr.left && x + sr.left <= pr.right && y + sr.top >= pr.top && y + sr.top <= pr.bottom;
+    onPop ? bubbleNav(true) : exitBubble();
+    return;
+  }
   if (zoomed()) {
     if (rx > 0.72) S.bubbleMode ? bubbleNav(S.dir === 'ltr') : resetCam(true);
     else if (rx < 0.28) S.bubbleMode ? bubbleNav(S.dir !== 'ltr') : resetCam(true);
@@ -1010,9 +1296,9 @@ function setUI(on) { clearTimeout(S.uiT); reader.classList.toggle('ui-off', !on)
 
 addEventListener('keydown', e => {
   if (reader.hidden) return;
-  if (e.key === 'ArrowRight') { e.preventDefault(); S.bubbleMode ? bubbleNav(S.dir === 'ltr') : flip('left'); }
+  if (e.key === 'ArrowRight') { e.preventDefault(); S.bubbleMode ? bubbleNav(S.dir === 'ltr') : S.autoBubble ? onSingleTap(stage.clientWidth * (S.dir === 'ltr' ? .7 : .3), stage.clientHeight / 2) : flip('left'); }
   else if (e.key === 'ArrowLeft') { e.preventDefault(); S.bubbleMode ? bubbleNav(S.dir !== 'ltr') : flip('right'); }
-  else if (e.key === 'Escape') { zoomed() ? resetCam(true) : closeBook(true); }
+  else if (e.key === 'Escape') { S.bubbleMode ? exitBubble() : zoomed() ? resetCam(true) : closeBook(true); }
 });
 
 /* ----- barre du haut ----- */
@@ -1021,12 +1307,20 @@ function updateChips() {
   $('#dirBtn').setAttribute('aria-label', 'Sens de lecture : ' + (S.dir === 'rtl' ? 'manga, de droite à gauche' : 'comics, de gauche à droite'));
   const lab = { auto: 'Auto', '1': '1 page', '2': '2 pages' }[S.layoutMode];
   $('#layBtn').innerHTML = `<span>Vue </span><b>${lab}</b>`;
+  $('#bubBtn').innerHTML = `<span>Bulles </span><b>${S.autoBubble ? 'ON' : 'OFF'}</b>`;
+  $('#bubBtn').setAttribute('aria-pressed', S.autoBubble ? 'true' : 'false');
 }
 $('#dirBtn').onclick = () => {
   S.dir = S.dir === 'ltr' ? 'rtl' : 'ltr';
   ls.set('dir.' + S.book.id, S.dir); ls.set('lastDir', S.dir);
   layout(); updateChips();
   toast(S.dir === 'rtl' ? 'Sens manga : de droite à gauche' : 'Sens comics : de gauche à droite', 1600);
+};
+$('#bubBtn').onclick = () => {
+  S.autoBubble = !S.autoBubble; ls.set('autoBubble', S.autoBubble);
+  if (!S.autoBubble && S.bubbleMode) exitBubble();
+  updateChips();
+  toast(S.autoBubble ? 'Lecture bulle par bulle : tape pour avancer' : 'Lecture page par page', 1800);
 };
 $('#layBtn').onclick = () => {
   S.layoutMode = { auto: '1', '1': '2', '2': 'auto' }[S.layoutMode]; ls.set('layout', S.layoutMode);
