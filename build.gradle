@@ -1,3 +1,52 @@
 plugins {
-    id 'com.android.application' version '8.7.3' apply false
+    id 'com.android.application' version '8.7.3'
+}
+
+android {
+    namespace 'app.koma.reader'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'app.koma.reader'
+        minSdk 26
+        targetSdk 34
+        versionCode 2
+        versionName '1.1'
+    }
+
+    signingConfigs {
+        koma {
+            storeFile file('koma.keystore')
+            storePassword 'komakoma'
+            keyAlias 'koma'
+            keyPassword 'komakoma'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.koma
+        }
+        debug {
+            signingConfig signingConfigs.koma
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    packaging {
+        resources {
+            excludes += ['META-INF/LICENSE*', 'META-INF/NOTICE*', 'META-INF/DEPENDENCIES', 'META-INF/*.kotlin_module']
+        }
+    }
+}
+
+dependencies {
+    implementation 'androidx.webkit:webkit:1.12.1'
+    implementation 'com.github.junrar:junrar:7.5.5'
+    implementation 'com.google.mlkit:text-recognition:16.0.1'
 }
