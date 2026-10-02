@@ -919,7 +919,7 @@ function holeRatio(a, r) {
 }
 // silhouette exacte de la bulle : intérieur + texte + contour, pour la découper hors de la page
 function regionMask(a, r) {
-  const { w, h, lum } = a, thr = a.thr, G = Math.round(6 * a.sc), grow = Math.max(4, Math.round(3 * a.sc) + 2), dark = Math.min(a.thr * 0.68, 150);
+  const { w, h, lum } = a, thr = a.thr, G = Math.round(6 * a.sc), grow = Math.max(3, Math.round(1.2 * a.sc) + 1), dark = Math.min(a.thr * 0.68, 150);
   const x0 = Math.max(0, r.x0 - G), y0 = Math.max(0, r.y0 - G), x1 = Math.min(w - 1, r.x1 + G), y1 = Math.min(h - 1, r.y1 + G);
   const mw = x1 - x0 + 1, mh = y1 - y0 + 1, N = mw * mh, M = new Uint8Array(N);
   for (let k = 0; k < r.n; k++) { const i = r.q[k]; M[(((i / w) | 0) - y0) * mw + (i % w - x0)] = 1; }
@@ -1085,46 +1085,79 @@ function nativeText(idx) {
 }
 // à partir des blocs de texte trouvés par l'IA : la bulle est la zone claire qui entoure chaque bloc
 function bubblesFromText(a, blocks) {
-  const { w, h, open, nw, nh } = a, N = w * h, sx = w / nw, sy = h / nh;
-  const vis = new Uint8Array(N), cap = Math.round(N * 0.14), buf = new Int32Array(cap + 8), out = [];
-  const R2 = Math.max(2, Math.round(2 * a.sc));
+  const { w, h, open, lum, nw, nh } = a, N = w * h, sx = w / nw, sy = h / nh;
+  // 1) les lignes de dialogue lues par l'IA (les grosses onomatopées sont écartées)
+  const lines = [];
   for (const b of blocks) {
     const txt = (b.t || '').replace(/[^\p{L}\p{N}?!]/gu, '');
     if (!txt.length) continue;
-    // les onomatopées (THD, CRCK…) sont écrites bien plus gros que les dialogues
-    if ((b.lh || b.h) > nh * 0.03) continue;
-    const bx0 = b.x * sx, by0 = b.y * sy, bx1 = (b.x + b.w) * sx, by1 = (b.y + b.h) * sy;
-    if (out.some(o => o._a && o._a[0] <= bx0 + 3 && o._a[2] >= bx1 - 3 && o._a[1] <= by0 + 3 && o._a[3] >= by1 - 3)) continue;
-    const cx = (bx0 + bx1) / 2, cy = (by0 + by1) / 2, hw = (bx1 - bx0) / 2, hh = (by1 - by0) / 2;
-    const seeds = [];
-    for (const [fx, fy] of [[0, 0], [-0.5, 0], [0.5, 0], [0, -0.5], [0, 0.5], [-1.08, 0], [1.08, 0], [0, -1.2], [0, 1.2], [-0.7, -1.12], [0.7, 1.12], [-0.7, 1.12], [0.7, -1.12]]) {
-      const x0 = Math.round(cx + fx * hw), y0 = Math.round(cy + fy * hh);
-      found: for (let r = 0; r <= R2 * 2; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
-        const x = x0 + dx, y = y0 + dy;
-        if (x >= 0 && y >= 0 && x < w && y < h && open[y * w + x]) { seeds.push(y * w + x); break found; }
-      }
+    const ls = Array.isArray(b.l) && b.l.length ? b.l : [{ x: b.x, y: b.y, w: b.w, h: b.lh || b.h }];
+    for (const l of ls) {
+      if (l.h > nh * 0.03 || l.h < nh * 0.003) continue;
+      lines.push({ x0: l.x * sx, y0: l.y * sy, x1: (l.x + l.w) * sx, y1: (l.y + l.h) * sy, region: 0 });
     }
-    let best = null;
-    for (const s of seeds) {
-      if (vis[s]) continue;
-      const r = flood(a, s, vis, cap, buf);
-      if (r.over || r.area > N * 0.12 || (r.border && r.area > N * 0.03)) continue;
-      const tx = hw * 0.3, ty = hh * 0.3;
-      if (!(r.x0 <= bx0 + tx && r.x1 >= bx1 - tx && r.y0 <= by0 + ty && r.y1 >= by1 - ty)) continue;
-      const rw = r.x1 - r.x0 + 1, rh = r.y1 - r.y0 + 1;
-      if (rw * rh > (bx1 - bx0) * (by1 - by0) * 8) continue;
-      if (rw > w * 0.6 || rh > h * 0.5) continue;
-      if (typeof edgeDark === 'function' && edgeDark(a, r) < 0.55) continue;
-      if (!best || r.area > best.area) { best = r; best.q = r.q.slice(0, r.n); }
+  }
+  // 2) chaque ligne cherche la zone claire qui l'entoure (l'intérieur de sa bulle)
+  const lab = new Int32Array(N), vis = new Uint8Array(N), cap = Math.round(N * 0.12), buf = new Int32Array(cap + 8);
+  const regions = [null];
+  const regionAt = i => {
+    if (i < 0 || i >= N || !open[i]) return 0;
+    if (lab[i]) return lab[i];
+    if (vis[i]) return -1;                      // morceau d'une zone trop grande
+    const r = flood(a, i, vis, cap, buf);
+    if (r.over) return -1;
+    r.q = r.q.slice(0, r.n);
+    for (let k = 0; k < r.n; k++) lab[r.q[k]] = regions.length;
+    let s = 0, s2 = 0; for (let k = 0; k < r.n; k++) { const v = lum[r.q[k]]; s += v; s2 += v * v; }
+    const m = s / r.n; r.sd = Math.sqrt(Math.max(0, s2 / r.n - m * m));
+    regions.push(r); return regions.length - 1;
+  };
+  const reach = Math.max(3, Math.round(4 * a.sc));
+  for (const L of lines) {
+    const lh = L.y1 - L.y0, cands = new Set();
+    const pts = [];
+    for (const fx of [0.15, 0.5, 0.85]) {
+      const x = L.x0 + (L.x1 - L.x0) * fx;
+      for (let k = 1; k <= reach; k++) { pts.push([x, L.y0 - k], [x, L.y1 + k]); }
     }
-    if (best) {
-      const o = toImgRect(a, best, true); o._a = [best.x0, best.y0, best.x1, best.y1]; out.push(o);
-    } else {
-      // texte sans bulle autour : cartouche simple ; les grosses onomatopées sont ignorées
-      if ((b.lh || b.h) < nh * 0.006) continue;
-      const pad = Math.max(b.h, b.w) * 0.1 + 8;
-      out.push({ x: b.x - pad, y: b.y - pad, w: b.w + 2 * pad, h: b.h + 2 * pad, _a: [bx0, by0, bx1, by1] });
+    for (let k = 1; k <= reach; k++) pts.push([L.x0 - k, (L.y0 + L.y1) / 2], [L.x1 + k, (L.y0 + L.y1) / 2]);
+    for (const [x, y] of pts) { const xi = Math.round(x), yi = Math.round(y); if (xi < 0 || yi < 0 || xi >= w || yi >= h) continue; const id = regionAt(yi * w + xi); if (id > 0) cands.add(id); }
+    let best = 0, bestA = Infinity; const tol = lh * 0.6;
+    for (const id of cands) {
+      const r = regions[id];
+      if (r.sd > 24) continue;                                   // un fond de bulle est uni
+      if (r.border && r.area > N * 0.02) continue;
+      if (!(r.x0 <= L.x0 + tol && r.x1 >= L.x1 - tol && r.y0 <= L.y0 + tol && r.y1 >= L.y1 - tol)) continue;
+      if (r.area < bestA) { bestA = r.area; best = id; }
     }
+    L.region = best;
+  }
+  // 3) une bulle = une zone + toutes ses lignes
+  const out = [], groups = new Map();
+  for (const L of lines) if (L.region) { if (!groups.has(L.region)) groups.set(L.region, []); groups.get(L.region).push(L); }
+  for (const [id, ls] of groups) {
+    const r = regions[id];
+    const ux0 = Math.min(...ls.map(l => l.x0)), uy0 = Math.min(...ls.map(l => l.y0)), ux1 = Math.max(...ls.map(l => l.x1)), uy1 = Math.max(...ls.map(l => l.y1));
+    const rw = r.x1 - r.x0 + 1, rh = r.y1 - r.y0 + 1;
+    // zone bien trop grande pour ce texte : ce n'est pas une bulle mais le décor
+    if (rw * rh > (ux1 - ux0) * (uy1 - uy0) * 9 || rw > w * 0.55 || rh > h * 0.45) { ls.forEach(l => l.region = 0); continue; }
+    // le texte fait partie de la bulle, même s'il touche le bord
+    const extra = [];
+    for (const l of ls) for (let y = Math.max(0, Math.floor(l.y0)); y <= Math.min(h - 1, Math.ceil(l.y1)); y++) for (let x = Math.max(0, Math.floor(l.x0)); x <= Math.min(w - 1, Math.ceil(l.x1)); x++) if (lab[y * w + x] !== id) extra.push(y * w + x);
+    if (extra.length) { const q = new Int32Array(r.n + extra.length); q.set(r.q.subarray(0, r.n)); q.set(extra, r.n); r.q = q; r.n = q.length; }
+    out.push(toImgRect(a, r, true));
+  }
+  // 4) texte sans bulle repérée : on regroupe les lignes voisines en cartouche
+  const free = lines.filter(l => !l.region).sort((p, q) => p.y0 - q.y0), boxes = [];
+  for (const l of free) {
+    const lh = l.y1 - l.y0;
+    const bx = boxes.find(b => l.y0 - b.y1 < lh * 1.3 && l.y0 >= b.y0 - lh && Math.min(b.x1, l.x1) - Math.max(b.x0, l.x0) > -lh);
+    if (bx) { bx.x0 = Math.min(bx.x0, l.x0); bx.x1 = Math.max(bx.x1, l.x1); bx.y1 = Math.max(bx.y1, l.y1); bx.lh = Math.max(bx.lh, lh); }
+    else boxes.push({ x0: l.x0, y0: l.y0, x1: l.x1, y1: l.y1, lh });
+  }
+  for (const b of boxes) {
+    const pad = b.lh * 0.9;
+    out.push({ x: (b.x0 - pad) / sx, y: (b.y0 - pad) / sy, w: (b.x1 - b.x0 + 2 * pad) / sx, h: (b.y1 - b.y0 + 2 * pad) / sy });
   }
   return out;
 }
