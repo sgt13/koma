@@ -871,7 +871,8 @@ async function getAnalysis(idx) {
     const i = y * w + x;
     if (light[i] && light[i - 1] && light[i + 1] && light[i - w] && light[i + w]) open[i] = 1;
   }
-  const a = { w, h, nw, nh, lum, open, ink, thr, sc: Math.max(w, h) / 640 };
+  const rgb = new Uint8Array(N * 3); for (let i = 0, j = 0; i < N; i++, j += 4) { rgb[i * 3] = d[j]; rgb[i * 3 + 1] = d[j + 1]; rgb[i * 3 + 2] = d[j + 2]; }
+  const a = { w, h, nw, nh, lum, open, ink, thr, rgb, sc: Math.max(w, h) / 640 };
   S.analysis.set(idx, a);
   if (S.analysis.size > 6) S.analysis.delete(S.analysis.keys().next().value);
   return a;
@@ -1084,6 +1085,58 @@ function nativeText(idx) {
   textCache.set(idx, p); return p;
 }
 // à partir des blocs de texte trouvés par l'IA : la bulle est la zone claire qui entoure chaque bloc
+// zone de la même couleur que le fond autour du texte (sépare une bulle blanche d'un décor bleu clair)
+function colorRegion(a, b) {
+  const { w, h, lum, rgb } = a; if (!rgb) return null;
+  const lh = b.lh, m = Math.round(lh * 0.6);
+  // couleur du fond de bulle : médiane des pixels clairs autour des lignes
+  const R = [], G = [], B = [];
+  for (let y = Math.max(0, Math.round(b.y0 - m)); y <= Math.min(h - 1, Math.round(b.y1 + m)); y++)
+    for (let x = Math.max(0, Math.round(b.x0 - m)); x <= Math.min(w - 1, Math.round(b.x1 + m)); x++) {
+      const i = y * w + x; if (lum[i] < a.thr) continue; R.push(rgb[i * 3]); G.push(rgb[i * 3 + 1]); B.push(rgb[i * 3 + 2]);
+    }
+  if (R.length < 20) return null;
+  const med = v => v.sort((p, q) => p - q)[v.length >> 1];
+  const fr = med(R), fg = med(G), fb = med(B);
+  // fenêtre de recherche autour du texte
+  const W = Math.round(Math.max(b.x1 - b.x0, lh * 6) * 1.2), H = Math.round(Math.max(b.y1 - b.y0, lh * 4) * 1.4);
+  const wx0 = Math.max(0, Math.round(b.x0 - W / 2)), wx1 = Math.min(w - 1, Math.round(b.x1 + W / 2));
+  const wy0 = Math.max(0, Math.round(b.y0 - H / 2)), wy1 = Math.min(h - 1, Math.round(b.y1 + H / 2));
+  const ww = wx1 - wx0 + 1, wh = wy1 - wy0 + 1, M = new Uint8Array(ww * wh);
+  const tol = 24 * 24 * 3;
+  for (let y = 0; y < wh; y++) for (let x = 0; x < ww; x++) {
+    const i = (y + wy0) * w + x + wx0, dr = rgb[i * 3] - fr, dg = rgb[i * 3 + 1] - fg, db = rgb[i * 3 + 2] - fb;
+    if (dr * dr + dg * dg + db * db < tol) M[y * ww + x] = 1;
+  }
+  // érosion d'1 px pour fermer les petites fuites
+  const E = new Uint8Array(ww * wh);
+  for (let y = 1; y < wh - 1; y++) for (let x = 1; x < ww - 1; x++) { const j = y * ww + x; if (M[j] && M[j - 1] && M[j + 1] && M[j - ww] && M[j + ww]) E[j] = 1; }
+  // germe : un pixel du fond juste au-dessus ou en dessous du texte
+  let seed = -1;
+  for (let k = 1; k <= m + 3 && seed < 0; k++) for (const fx of [0.5, 0.25, 0.75]) {
+    const x = Math.round(b.x0 + (b.x1 - b.x0) * fx) - wx0;
+    for (const y of [Math.round(b.y0) - k - wy0, Math.round(b.y1) + k - wy0]) if (x > 0 && y > 0 && x < ww - 1 && y < wh - 1 && E[y * ww + x]) { seed = y * ww + x; break; }
+    if (seed >= 0) break;
+  }
+  if (seed < 0) return null;
+  const q = [seed]; E[seed] = 2; let x0 = ww, y0 = wh, x1 = 0, y1 = 0;
+  for (let k = 0; k < q.length; k++) {
+    const j = q[k], x = j % ww, y = (j / ww) | 0;
+    if (x <= 0 || y <= 0 || x >= ww - 1 || y >= wh - 1) return null;   // déborde : ce n'est pas une bulle fermée
+    if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+    for (const n of [j - 1, j + 1, j - ww, j + ww]) if (E[n] === 1) { E[n] = 2; q.push(n); }
+  }
+  // le texte doit être dedans, et la zone pas démesurée
+  const tl = lh * 0.6;
+  if (!(x0 + wx0 <= b.x0 + tl && x1 + wx0 >= b.x1 - tl && y0 + wy0 <= b.y0 + tl && y1 + wy0 >= b.y1 - tl)) return null;
+  if ((x1 - x0 + 1) * (y1 - y0 + 1) > (b.x1 - b.x0 + 2 * lh) * (b.y1 - b.y0 + 2 * lh) * 6) return null;
+  // ré-élargir d'1 px (l'érosion) puis convertir en coordonnées de page, texte compris
+  const set = new Set();
+  for (const j of q) { const x = j % ww, y = (j / ww) | 0; for (const [dx, dy] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) set.add((y + dy + wy0) * w + x + dx + wx0); }
+  for (let y = Math.max(0, Math.floor(b.y0)); y <= Math.min(h - 1, Math.ceil(b.y1)); y++) for (let x = Math.max(0, Math.floor(b.x0)); x <= Math.min(w - 1, Math.ceil(b.x1)); x++) set.add(y * w + x);
+  const arr = Int32Array.from(set);
+  return { area: arr.length, x0: x0 + wx0 - 1, y0: y0 + wy0 - 1, x1: x1 + wx0 + 1, y1: y1 + wy0 + 1, q: arr, n: arr.length, border: false, over: false };
+}
 function bubblesFromText(a, blocks) {
   const { w, h, open, lum, nw, nh } = a, N = w * h, sx = w / nw, sy = h / nh;
   // 1) les lignes de dialogue lues par l'IA (les grosses onomatopées sont écartées)
@@ -1156,6 +1209,9 @@ function bubblesFromText(a, blocks) {
     else boxes.push({ x0: l.x0, y0: l.y0, x1: l.x1, y1: l.y1, lh });
   }
   for (const b of boxes) {
+    // 2e essai : bulle blanche posée sur un fond clair (ciel, mur…) → on suit la couleur exacte du fond de bulle
+    const cr = colorRegion(a, b);
+    if (cr) { out.push(toImgRect(a, cr, true)); continue; }
     const pad = b.lh * 0.9;
     out.push({ x: (b.x0 - pad) / sx, y: (b.y0 - pad) / sy, w: (b.x1 - b.x0 + 2 * pad) / sx, h: (b.y1 - b.y0 + 2 * pad) / sy });
   }
