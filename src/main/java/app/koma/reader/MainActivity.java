@@ -219,15 +219,22 @@ public class MainActivity extends Activity {
                                         Rect r = b.getBoundingBox();
                                         if (r == null) continue;
                                         float lh = 0; int n = 0;
+                                        JSONArray la = new JSONArray();
                                         for (Text.Line l : b.getLines()) {
                                             Rect lr = l.getBoundingBox();
-                                            if (lr != null) { lh += lr.height(); n++; }
+                                            if (lr == null) continue;
+                                            lh += lr.height(); n++;
+                                            JSONObject lj = new JSONObject();
+                                            lj.put("x", lr.left * sx); lj.put("y", lr.top * sy);
+                                            lj.put("w", lr.width() * sx); lj.put("h", lr.height() * sy);
+                                            la.put(lj);
                                         }
                                         JSONObject j = new JSONObject();
                                         j.put("x", r.left * sx); j.put("y", r.top * sy);
                                         j.put("w", r.width() * sx); j.put("h", r.height() * sy);
                                         j.put("lh", n > 0 ? lh / n * sy : r.height() * sy);
                                         j.put("t", b.getText());
+                                        j.put("l", la);
                                         arr.put(j);
                                     }
                                 } catch (Exception ignored) { }
